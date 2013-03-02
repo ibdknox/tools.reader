@@ -14,6 +14,8 @@
 ;; helpers
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(defn int-dec [i] (int (dec i)))
+
 (declare read macros dispatch-macros
          ^:dynamic *read-eval*
          ^:dynamic *data-readers*
@@ -150,32 +152,38 @@
               (recur (if-not (identical? o rdr) (conj! a o) a)))))
         (reader-error rdr "EOF while reading"
                       (when first-line
-                        (str ", starting at line" first-line)))))))
+                        (str ", starting at line " first-line))
+                      (when first-line
+                        {:line first-line}))))))
 
 (defn- read-list
   [rdr _]
   (let [[line column] (when (indexing-reader? rdr)
-                        [(get-line-number rdr) (dec (get-column-number rdr))])
+                        [(get-line-number rdr) (int-dec (get-column-number rdr))])
         the-list (read-delimited \) rdr true)]
     (if (empty? the-list)
       '()
       (with-meta (clojure.lang.PersistentList/create the-list)
         (when line
-          {:line line :column column})))))
+          {:line line :column column
+           :end-line (get-line-number rdr)
+           :end-column (int-dec (get-column-number rdr))})))))
 
 (defn- read-vector
   [rdr _]
   (let [[line column] (when (indexing-reader? rdr)
-                        [(get-line-number rdr) (dec (get-column-number rdr))])
+                        [(get-line-number rdr) (int-dec (get-column-number rdr))])
         the-vector (read-delimited \] rdr true)]
     (with-meta the-vector
       (when line
-        {:line line :column column}))))
+        {:line line :column column
+         :end-line (get-line-number rdr)
+         :end-column (int-dec (get-column-number rdr))}))))
 
 (defn- read-map
   [rdr _]
   (let [[line column] (when (indexing-reader? rdr)
-                        [(get-line-number rdr) (dec (get-column-number rdr))])
+                        [(get-line-number rdr) (int-dec (get-column-number rdr))])
         the-map (read-delimited \} rdr true)
         map-count (count the-map)]
     (when (odd? map-count)
@@ -185,7 +193,9 @@
         {}
         (RT/map (to-array the-map)))
       (when line
-        {:line line :column column}))))
+        {:line line :column column
+         :end-line (get-line-number rdr)
+         :end-column (int-dec (get-column-number rdr))}))))
 
 (defn- read-number
   [reader initch]
@@ -238,7 +248,7 @@
   [rdr initch]
   (when-let [token (read-token rdr initch)]
     (let [[line column] (when (indexing-reader? rdr)
-                          [(get-line-number rdr) (dec (get-column-number rdr))])]
+                          [(get-line-number rdr) (int-dec (get-column-number rdr))])]
       (case token
 
         ;; special symbols
@@ -253,7 +263,9 @@
         (or (when-let [p (parse-symbol token)]
               (with-meta (symbol (p 0) (p 1))
                 (when line
-                  {:line line :column column})))
+                  {:line line :column column
+                   :end-line (get-line-number rdr)
+                   :end-column (int-dec (get-column-number rdr))})))
             (reader-error rdr "Invalid token: " token))))))
 
 (defn- resolve-ns [sym]
@@ -283,12 +295,18 @@
 (defn- wrapping-reader
   [sym]
   (fn [rdr _]
-    (list sym (read rdr true nil true))))
+  (let [[line column] (when (indexing-reader? rdr)
+                        [(get-line-number rdr) (int-dec (get-column-number rdr))])]
+    (with-meta (list sym (read rdr true nil true)) 
+      (when line
+        {:line line :column column
+         :end-line (get-line-number rdr)
+         :end-column (int-dec (get-column-number rdr))})))))
 
 (defn- read-meta
   [rdr _]
   (let [[line column] (when (indexing-reader? rdr)
-                        [(get-line-number rdr) (dec (get-column-number rdr))])
+                        [(get-line-number rdr) (int-dec (get-column-number rdr))])
         m (desugar-meta (read rdr true nil true))]
     (when-not (map? m)
       (reader-error rdr "Metadata must be Symbol, Keyword, String or Map"))
@@ -296,8 +314,9 @@
       (if (instance? IMeta o)
         (let [m (if (and line
                          (seq? o))
-                  (assoc m :line line
-                           :column column)
+                  (merge m {:line line :column column
+                            :end-line (get-line-number rdr)
+                            :end-column (int-dec (get-column-number rdr))})
                   m)]
           (if (instance? IObj o)
             (with-meta o (merge (meta o) m))
@@ -306,7 +325,14 @@
 
 (defn- read-set
   [rdr _]
-  (PersistentHashSet/createWithCheck (read-delimited \} rdr true)))
+  (let [[line column] (when (indexing-reader? rdr)
+                        [(get-line-number rdr) (int-dec (get-column-number rdr))])]
+    (with-meta 
+      (PersistentHashSet/createWithCheck (read-delimited \} rdr true))
+      (when line
+        {:line line :column column
+         :end-line (get-line-number rdr)
+         :end-column (int-dec (get-column-number rdr))}))))
 
 (defn- read-discard
   [rdr _]
@@ -470,7 +496,7 @@
 
 (defn- add-meta [form ret]
   (if (and (instance? IObj form)
-           (dissoc (meta form) :line :column))
+           (dissoc (meta form) :line :column :end-line :end-column))
     (list 'clojure.core/with-meta ret (syntax-quote* (meta form)))
     ret))
 
@@ -683,8 +709,14 @@
   ([reader eof-error? sentinel recursive?]
      (when (= :unknown *read-eval*)
        (reader-error "Reading disallowed - *read-eval* bound to :unknown"))
+   (let [cur (when (indexing-reader? reader)
+               {:line (get-line-number reader)
+                :column (get-column-number reader)})]
      (try
-       (let [ch (read-char reader)]
+       (let [ch (read-char reader)
+             cur (when (indexing-reader? reader)
+                   {:line (get-line-number reader)
+                    :column (get-column-number reader)})]
          (cond
           (whitespace? ch) (read reader eof-error? sentinel recursive?)
           (nil? ch) (if eof-error? (reader-error reader "EOF") sentinel)
@@ -703,9 +735,9 @@
            (throw (ex-info (.getMessage e)
                            (merge {:type :reader-exception}
                                   (if (indexing-reader? reader)
-                                    {:line (get-line-number reader)
-                                     :column (get-column-number reader)}))
-                           e)))))))
+                                    (merge cur {:end-line (get-line-number reader)
+                                                :end-column (get-column-number reader)})))
+                           e))))))))
 
 (defn read-string
   "Reads one object from the string s.

@@ -1,4 +1,4 @@
-(defproject org.clojure/tools.reader "0.7.1-SNAPSHOT"
+(defproject ibdknox/tools.reader "0.7.2"
   :description "A Clojure reader in Clojure"
   :parent [org.clojure/pom.contrib "0.0.26"]
   :url "https://github.com/clojure/tools.reader"
@@ -6,9 +6,9 @@
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :source-paths ["src/main/clojure"]
   :test-paths ["src/test/clojure"]
-  :aot [clojure.tools.reader.impl.ExceptionInfo]
+  :aot []
   :repositories {"sonatype-oss-public" "https://oss.sonatype.org/content/groups/public/"}
-  :dependencies [[org.clojure/clojure "1.5.0-master-SNAPSHOT"]]
+  :dependencies [[org.clojure/clojure "1.5.0"]]
   :profiles {:1.3 {:dependencies [[org.clojure/clojure "1.3.0"]]}
              :1.4 {:dependencies [[org.clojure/clojure "1.4.0"]]}
              :1.5   {:dependencies [[org.clojure/clojure "1.5.0-master-SNAPSHOT"]]}}

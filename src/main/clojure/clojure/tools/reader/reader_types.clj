@@ -207,8 +207,13 @@
   "Throws an ExceptionInfo with the given message.
    If rdr is an IndexingReader, additional information about column and line number is provided"
   [rdr & msg]
-  (throw (ex-info (apply str msg)
-                  (merge {:type :reader-exception}
-                         (when (indexing-reader? rdr)
-                           {:line (get-line-number rdr)
-                            :column (get-column-number rdr)})))))
+  (let [[msg info] (if (map? (last msg))
+                     [(butlast msg) (last msg)]
+                     [msg nil])]
+    (throw (ex-info (apply str msg)
+                    (merge {:type :reader-exception}
+                           (when (indexing-reader? rdr)
+                             {:line (or (:line info) (get-line-number rdr))
+                              :end-line (get-line-number rdr)
+                              :column (or (:column info) (get-column-number rdr))
+                              :end-column (get-column-number rdr)}))))))
